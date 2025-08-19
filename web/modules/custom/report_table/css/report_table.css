@@ -1,0 +1,100 @@
+/* Загальний фон */
+body.path-report-table {
+  background-color: #1c1c1c;
+  font-family: "Source Sans Pro", sans-serif;
+  color: #f5f5f5;
+  padding: 20px;
+}
+
+.page-wrapper{
+ background-color: #1c1c1c !important;
+ }
+ 
+.social-bar{
+  background-color: #b8976a !important;
+ }
+/*
+
+/* Заголовок сторінки */
+.page-title {
+  color: #b8976a;
+  font-weight: 700;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #444;
+  padding-bottom: 10px;
+}
+
+/* Таблиця */
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: #2a2a2a;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Заголовки */
+.report-table th {
+  background-color: #333;
+  color: #b8976a;
+  font-weight: 600;
+  padding: 8px;
+  border: 1px solid #444;
+  text-align: center;
+}
+
+/* Звичайні клітинки */
+.report-table td {
+  border: 1px solid #444;
+  padding: 6px;
+  text-align: center;
+}
+
+/* Поля вводу */
+.report-table input[type="number"] {
+  width: 70px;
+  background: #1c1c1c;
+  color: #f5f5f5;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 4px;
+  text-align: right;
+  font-weight: 500;
+}
+
+/* Спеціальні клітинки Q1, Q2, Q3, Q4, YTD 
+.report-table td.quarter-cell {
+  background-color: #1c1c1c;
+  font-weight: 600;
+  color: #b8976a;
+}
+
+/* Q1, Q2, Q3, Q4, YTD */
+.quarter-cell,
+.report-table th.quarter-cell {
+  background-color: #b8976a !important;
+  font-weight: 700;
+  color: #1c1c1c !important;
+}
+
+
+/* Кнопка */
+.report-table-submit {
+  margin-top: 20px;
+  background-color: #b8976a !important;
+  color: #fff !important;
+  border: none;
+  border-color: #b8976a !important;
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.report-table-submit:hover {
+  background-color: #000 !important;
+  border-color: #b8976a !important;
+}
+
