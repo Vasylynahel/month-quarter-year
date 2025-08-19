@@ -25,51 +25,70 @@ class ReportTableForm extends FormBase {
     $header = array_merge(['Year'], $months);
 
     $form['#attached']['library'][] = 'report_table/report_table.styles';
-    $form['#attributes']['class'][] = 'report-table-wrapper';
 
-    // Add year button
-    $form['add_year'] = [
+    // 1️⃣ Отримання / ініціалізація таблиць та років
+    $tables = $form_state->get('tables');
+    if ($tables === NULL) {
+      $tables = [[date('Y')]]; // одна таблиця з поточним роком
+      $form_state->set('tables', $tables);
+    }
+
+    // 2️⃣ Кнопки "Add Table" і "Add Year" над усіма таблицями
+    $form['actions_top'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['actions-top']],
+    ];
+
+    $form['actions_top']['add_table'] = [
+      '#type' => 'submit',
+      '#value' => $this->t('Add Table'),
+      '#submit' => ['::addTableSubmit'],
+      '#limit_validation_errors' => [],
+    ];
+
+    $form['actions_top']['add_year'] = [
       '#type' => 'submit',
       '#value' => $this->t('Add Year'),
       '#submit' => ['::addYearSubmit'],
       '#limit_validation_errors' => [],
     ];
 
-    // Table
-    $form['table'] = [
-      '#type' => 'table',
-      '#header' => $header,
-      '#attributes' => ['class' => ['report-table']],
-    ];
-
-    $years = $form_state->get('years');
-    if ($years === NULL) {
-      $years = [$current_year];
-      $form_state->set('years', $years);
-    }
-
-    foreach ($years as $year) {
-      $form['table'][$year]['year'] = [
-        '#markup' => $year,
+    // 3️⃣ Генерація всіх таблиць
+    foreach ($tables as $index => $years) {
+      $form['tables'][$index]['table'] = [
+        '#type' => 'table',
+        '#header' => $header,
+        '#attributes' => ['class' => ['report-table', 'report-table-wrapper']],
       ];
 
-      foreach ($months as $month) {
-        $cell = [
-          '#type' => 'number',
-          '#default_value' => '',
-          '#min' => 0,
-          '#attributes' => ['class' => []],
+      foreach ($years as $year) {
+        $form['tables'][$index]['table'][$year]['year'] = [
+          '#markup' => $year,
         ];
 
-        if (in_array($month, ['Q1', 'Q2', 'Q3', 'Q4', 'YTD'])) {
-          $cell['#attributes']['class'][] = 'quarter-cell';
-        }
+        foreach ($months as $month) {
+          $cell = [
+            '#type' => 'number',
+            '#default_value' => '',
+            '#min' => 0,
+            '#attributes' => ['class' => []],
+            '#parents' => ['tables', $index, 'table', $year, $month],
+          ];
 
-        $form['table'][$year][$month] = $cell;
+          if (in_array($month, ['Q1', 'Q2', 'Q3', 'Q4', 'YTD'])) {
+            $cell['#attributes']['class'][] = 'quarter-cell';
+          }
+
+          $form['tables'][$index]['table'][$year][$month] = $cell;
+        }
       }
     }
 
-    // Submit button (renamed and updated)
+    // 4️⃣ Кнопка Submit
+    $form['actions'] = [
+      '#type' => 'actions',
+    ];
+
     $form['actions']['submit'] = [
       '#type' => 'submit',
       '#value' => $this->t('Submit'),
@@ -81,52 +100,82 @@ class ReportTableForm extends FormBase {
   }
 
   /**
-   * Validate form input
+   * ✅ Валідація форми: всі значення повинні бути числами >= 0
    */
-  public function validateForm(array &$form, FormStateInterface $form_state) {
-    $valid = TRUE;
-    $values = $form_state->getValue('table');
+public function validateForm(array &$form, FormStateInterface $form_state) {
+  $valid = TRUE;
+  $tables = $form_state->getValue('tables');
 
-    foreach ($values as $year => $months) {
-      foreach ($months as $month => $value) {
-        if ($month === 'year') {
+  if (!is_array($tables)) {
+    $valid = FALSE;
+    $form_state->setErrorByName('tables', $this->t('No table data found.'));
+  }
+  else {
+    foreach ($tables as $table_index => $table) {
+      if (!isset($table['table']) || !is_array($table['table'])) {
+        $valid = FALSE;
+        $form_state->setErrorByName("tables][$table_index][table", $this->t('Table data missing.'));
+        continue;
+      }
+
+      foreach ($table['table'] as $year => $months) {
+        if ($year === 'year') {
           continue;
         }
-        // Приклад: значення має бути числом і не від’ємне
-        if (!is_numeric($value) || $value < 0) {
-          $valid = FALSE;
-          $form_state->setErrorByName("table][$year][$month", $this->t('Value must be a non-negative number.'));
+        foreach ($months as $month => $value) {
+          if ($month === 'year') {
+            continue;
+          }
+          $value_trimmed = trim((string)$value);
+
+          if ($value_trimmed === '' || !is_numeric($value_trimmed) || $value_trimmed < 0) {
+            $valid = FALSE;
+            $form_state->setErrorByName(
+              "tables][$table_index][table][$year][$month",
+              $this->t('Each cell must contain a non-negative number.')
+            );
+          }
         }
       }
     }
-
-    // Збереження флагу валідації
-    $form_state->set('is_valid', $valid);
   }
 
+  $form_state->set('is_valid', $valid);
+}
+
   /**
-   * Submit form
+   * ✅ Submit обробка
    */
   public function submitForm(array &$form, FormStateInterface $form_state) {
     if ($form_state->get('is_valid')) {
       \Drupal::messenger()->addMessage($this->t('Valid'));
-    }
-    else {
+    } else {
       \Drupal::messenger()->addMessage($this->t('Invalid'), 'error');
     }
   }
 
   /**
-   * Add year button handler
+   * ➕ Додати таблицю
+   */
+  public function addTableSubmit(array &$form, FormStateInterface $form_state) {
+    $tables = $form_state->get('tables') ?? [];
+    $tables[] = [date('Y')];
+    $form_state->set('tables', $tables);
+    $form_state->setRebuild(TRUE);
+  }
+
+  /**
+   * ➕ Додати рік до всіх таблиць
    */
   public function addYearSubmit(array &$form, FormStateInterface $form_state) {
-    $years = $form_state->get('years');
-    if (empty($years)) {
-      $years = [date('Y')];
+    $tables = $form_state->get('tables') ?? [];
+
+    foreach ($tables as &$years) {
+      $last_year = end($years);
+      $years[] = $last_year - 1;
     }
-    $last_year = end($years);
-    $years[] = $last_year - 1;
-    $form_state->set('years', $years);
+
+    $form_state->set('tables', $tables);
     $form_state->setRebuild(TRUE);
   }
 }
