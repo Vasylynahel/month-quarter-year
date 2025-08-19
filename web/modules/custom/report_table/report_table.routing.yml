@@ -1,0 +1,8 @@
+report_table.form:
+  path: '/report-table'
+  defaults:
+    _form: '\Drupal\report_table\Form\ReportTableForm'
+    _title: 'Табл. 1.1'
+  requirements:
+    _permission: 'access content'
+
