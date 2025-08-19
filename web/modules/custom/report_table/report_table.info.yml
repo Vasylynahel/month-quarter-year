@@ -1,0 +1,5 @@
+name: 'Report Table'
+type: module
+description: 'Сторінка з формою-таблицею: місяці, квартали, рік.'
+core_version_requirement: ^10 || ^11
+package: Custom
