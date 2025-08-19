@@ -2,4 +2,3 @@ report_table.styles:
   css:
     theme:
       css/report_table.css: {}
-
