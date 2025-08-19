@@ -3,11 +3,7 @@
         'name' => 'drupal/recommended-project',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-<<<<<<< HEAD
-        'reference' => 'de70188ed1bacd22cae2174b3cb123be8047b6b7',
-=======
-        'reference' => '8ec4c42306ebe78bcf93dfeb55873aff7d04081d',
->>>>>>> 32e5d5c7 (Button Add Year)
+        'reference' => 'c7d7eca0409bf6da838c67b97dbde11b3a6ccf64',
         'type' => 'project',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -350,11 +346,7 @@
         'drupal/recommended-project' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-<<<<<<< HEAD
-            'reference' => 'de70188ed1bacd22cae2174b3cb123be8047b6b7',
-=======
-            'reference' => '8ec4c42306ebe78bcf93dfeb55873aff7d04081d',
->>>>>>> 32e5d5c7 (Button Add Year)
+            'reference' => 'c7d7eca0409bf6da838c67b97dbde11b3a6ccf64',
             'type' => 'project',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),
