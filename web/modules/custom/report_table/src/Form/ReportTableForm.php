@@ -106,35 +106,68 @@ public function validateForm(array &$form, FormStateInterface $form_state) {
   $valid = TRUE;
   $tables = $form_state->getValue('tables');
 
+  // Список місяців у правильному порядку
+  $months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
   if (!is_array($tables)) {
-    $valid = FALSE;
     $form_state->setErrorByName('tables', $this->t('No table data found.'));
+    return;
   }
-  else {
-    foreach ($tables as $table_index => $table) {
-      if (!isset($table['table']) || !is_array($table['table'])) {
-        $valid = FALSE;
-        $form_state->setErrorByName("tables][$table_index][table", $this->t('Table data missing.'));
+
+  $global_period = NULL; // тут зберігаємо спільний період для всіх таблиць
+
+  foreach ($tables as $table_index => $table) {
+    foreach ($table['table'] as $year => $row) {
+      if ($year === 'year') {
         continue;
       }
 
-      foreach ($table['table'] as $year => $months) {
-        if ($year === 'year') {
-          continue;
+      // 1️⃣ Визначаємо заповнені місяці
+      $filled = [];
+      foreach ($months as $month) {
+        $val = trim((string) ($row[$month] ?? ''));
+        if ($val !== '' && is_numeric($val) && $val >= 0) {
+          $filled[] = $month;
         }
-        foreach ($months as $month => $value) {
-          if ($month === 'year') {
-            continue;
-          }
-          $value_trimmed = trim((string)$value);
+      }
 
-          if ($value_trimmed === '' || !is_numeric($value_trimmed) || $value_trimmed < 0) {
-            $valid = FALSE;
-            $form_state->setErrorByName(
-              "tables][$table_index][table][$year][$month",
-              $this->t('Each cell must contain a non-negative number.')
-            );
-          }
+      if (empty($filled)) {
+        continue; // рік пустий — пропускаємо
+      }
+
+      $first = array_search(reset($filled), $months);
+      $last  = array_search(end($filled), $months);
+
+      // 2️⃣ Перевірка на «дірки» в одному році
+      for ($i = $first; $i <= $last; $i++) {
+        $m = $months[$i];
+        $val = trim((string) ($row[$m] ?? ''));
+        if ($val === '' || !is_numeric($val) || $val < 0) {
+          $form_state->setErrorByName(
+            "tables][$table_index][table][$year][$m",
+            $this->t("Missing value for @month in continuous period.", ['@month' => $m])
+          );
+          $valid = FALSE;
+        }
+      }
+
+      // 3️⃣ Перевірка, що всі таблиці мають однаковий період
+      $period = [$first, $last];
+      if ($global_period === NULL) {
+        $global_period = $period;
+      } else {
+        if ($global_period !== $period) {
+          $form_state->setErrorByName(
+            "tables][$table_index][table][$year",
+            $this->t("All tables must have the same period (from @first to @last).", [
+              '@first' => $months[$global_period[0]],
+              '@last' => $months[$global_period[1]],
+            ])
+          );
+          $valid = FALSE;
         }
       }
     }
@@ -142,6 +175,7 @@ public function validateForm(array &$form, FormStateInterface $form_state) {
 
   $form_state->set('is_valid', $valid);
 }
+
 
   /**
    * ✅ Submit обробка
