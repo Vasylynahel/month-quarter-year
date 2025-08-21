@@ -26,14 +26,12 @@ class ReportTableForm extends FormBase {
 
     $form['#attached']['library'][] = 'report_table/report_table.styles';
 
-    // 1️⃣ Отримання / ініціалізація таблиць та років
     $tables = $form_state->get('tables');
     if ($tables === NULL) {
-      $tables = [[date('Y')]]; // одна таблиця з поточним роком
+      $tables = [[date('Y')]];
       $form_state->set('tables', $tables);
     }
 
-    // 2️⃣ Кнопки "Add Table" і "Add Year" над усіма таблицями
     $form['actions_top'] = [
       '#type' => 'container',
       '#attributes' => ['class' => ['actions-top']],
@@ -53,7 +51,6 @@ class ReportTableForm extends FormBase {
       '#limit_validation_errors' => [],
     ];
 
-    // 3️⃣ Генерація всіх таблиць
     foreach ($tables as $index => $years) {
       $form['tables'][$index]['table'] = [
         '#type' => 'table',
@@ -72,10 +69,11 @@ class ReportTableForm extends FormBase {
             '#default_value' => '',
             '#min' => 0,
             '#attributes' => ['class' => []],
+            // ВАЖЛИВО: правильні parents, щоб значення реально лежали у tables[index][table][year][month]
             '#parents' => ['tables', $index, 'table', $year, $month],
           ];
 
-          if (in_array($month, ['Q1', 'Q2', 'Q3', 'Q4', 'YTD'])) {
+          if (in_array($month, ['Q1', 'Q2', 'Q3', 'Q4', 'YTD'], true)) {
             $cell['#attributes']['class'][] = 'quarter-cell';
           }
 
@@ -84,7 +82,6 @@ class ReportTableForm extends FormBase {
       }
     }
 
-    // 4️⃣ Кнопка Submit
     $form['actions'] = [
       '#type' => 'actions',
     ];
@@ -99,98 +96,87 @@ class ReportTableForm extends FormBase {
     return $form;
   }
 
-  /**
-   * ✅ Валідація форми: всі значення повинні бути числами >= 0
-   */
-public function validateForm(array &$form, FormStateInterface $form_state) {
-  $valid = TRUE;
-  $tables = $form_state->getValue('tables');
+  public function validateForm(array &$form, FormStateInterface $form_state) {
+    $tables = $form_state->getValue('tables') ?? [];
+    if (empty($tables)) {
+      return;
+    }
 
-  // Список місяців у правильному порядку
-  $months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
+    $periods = []; // для перевірки однакового періоду у всіх таблицях
 
-  if (!is_array($tables)) {
-    $form_state->setErrorByName('tables', $this->t('No table data found.'));
-    return;
-  }
+    foreach ($tables as $index => $tableWrapper) {
+      // --- FIX: беремо саме масив з даними рядків/місяців ---
+      $table = isset($tableWrapper['table']) && is_array($tableWrapper['table'])
+        ? $tableWrapper['table']
+        : (is_array($tableWrapper) ? $tableWrapper : []);
 
-  $global_period = NULL; // тут зберігаємо спільний період для всіх таблиць
+      $anchor = "tables][$index][table"; // куди вішати помилку
 
-  foreach ($tables as $table_index => $table) {
-    foreach ($table['table'] as $year => $row) {
-      if ($year === 'year') {
+      $filledMonths = $this->getFilledMonths($table);
+
+      if (empty($filledMonths)) {
+        $form_state->setErrorByName($anchor, $this->t('Таблиця @num не містить жодного заповненого місяця.', ['@num' => $index + 1]));
+        // навіть якщо порожня, далі не валідовуємо її
         continue;
       }
 
-      // 1️⃣ Визначаємо заповнені місяці
-      $filled = [];
-      foreach ($months as $month) {
-        $val = trim((string) ($row[$month] ?? ''));
-        if ($val !== '' && is_numeric($val) && $val >= 0) {
-          $filled[] = $month;
-        }
+      // 1) Розриви по місяцях (у т.ч. на межі років)
+      $missingMonths = $this->getMissingMonths($filledMonths);
+      if (!empty($missingMonths)) {
+        $form_state->setErrorByName(
+          $anchor,
+          $this->t('У таблиці @num є розриви по місяцях. Пропущено: @list', [
+            '@num' => $index + 1,
+            '@list' => $this->formatMonthList($missingMonths, 12),
+          ])
+        );
       }
 
-      if (empty($filled)) {
-        continue; // рік пустий — пропускаємо
+      // 2) Розриви по роках (якщо років більше одного)
+      $missingYears = $this->getMissingYears($filledMonths);
+      if (!empty($missingYears)) {
+      $form_state->setErrorByName(
+          $anchor,
+          $this->t('У таблиці @num є розриви по роках. Пропущені роки: @years', [
+            '@num'   => $index + 1,
+            '@years' => implode(', ', $missingYears),
+          ])
+        );
       }
 
-      $first = array_search(reset($filled), $months);
-      $last  = array_search(end($filled), $months);
+      // для перевірки «однаковий період»
+      $periods[] = [
+        'start' => $filledMonths[0],
+        'end'   => $filledMonths[count($filledMonths) - 1],
+      ];
+    }
 
-      // 2️⃣ Перевірка на «дірки» в одному році
-      for ($i = $first; $i <= $last; $i++) {
-        $m = $months[$i];
-        $val = trim((string) ($row[$m] ?? ''));
-        if ($val === '' || !is_numeric($val) || $val < 0) {
+    // 3) Усі таблиці повинні мати ОДНАКОВИЙ період (той самий min і max)
+    if (!empty($periods)) {
+      $firstStart = $periods[0]['start'];
+      $firstEnd   = $periods[0]['end'];
+
+      foreach ($periods as $i => $p) {
+        if ($p['start'] !== $firstStart || $p['end'] !== $firstEnd) {
           $form_state->setErrorByName(
-            "tables][$table_index][table][$year][$m",
-            $this->t("Missing value for @month in continuous period.", ['@month' => $m])
-          );
-          $valid = FALSE;
-        }
-      }
-
-      // 3️⃣ Перевірка, що всі таблиці мають однаковий період
-      $period = [$first, $last];
-      if ($global_period === NULL) {
-        $global_period = $period;
-      } else {
-        if ($global_period !== $period) {
-          $form_state->setErrorByName(
-            "tables][$table_index][table][$year",
-            $this->t("All tables must have the same period (from @first to @last).", [
-              '@first' => $months[$global_period[0]],
-              '@last' => $months[$global_period[1]],
+            "tables][$i][table",
+            $this->t('Усі таблиці мають бути за однаковий період: @s — @e. Таблиця @num має @cs — @ce.', [
+              '@s'   => $this->humanMonth($firstStart),
+              '@e'   => $this->humanMonth($firstEnd),
+              '@num' => $i + 1,
+              '@cs'  => $this->humanMonth($p['start']),
+              '@ce'  => $this->humanMonth($p['end']),
             ])
           );
-          $valid = FALSE;
         }
       }
     }
   }
 
-  $form_state->set('is_valid', $valid);
-}
-
-
-  /**
-   * ✅ Submit обробка
-   */
   public function submitForm(array &$form, FormStateInterface $form_state) {
-    if ($form_state->get('is_valid')) {
-      \Drupal::messenger()->addMessage($this->t('Valid'));
-    } else {
-      \Drupal::messenger()->addMessage($this->t('Invalid'), 'error');
-    }
+    \Drupal::messenger()->addMessage($this->t('Форма успішно надіслана.'));
   }
 
-  /**
-   * ➕ Додати таблицю
-   */
   public function addTableSubmit(array &$form, FormStateInterface $form_state) {
     $tables = $form_state->get('tables') ?? [];
     $tables[] = [date('Y')];
@@ -198,19 +184,120 @@ public function validateForm(array &$form, FormStateInterface $form_state) {
     $form_state->setRebuild(TRUE);
   }
 
-  /**
-   * ➕ Додати рік до всіх таблиць
-   */
   public function addYearSubmit(array &$form, FormStateInterface $form_state) {
     $tables = $form_state->get('tables') ?? [];
 
     foreach ($tables as &$years) {
       $last_year = end($years);
       $years[] = $last_year - 1;
+      // повертаємо внутрішній покажчик масиву, щоб уникнути побічних ефектів
+      reset($years);
     }
+    unset($years);
 
     $form_state->set('tables', $tables);
     $form_state->setRebuild(TRUE);
   }
-}
 
+  // ----------------- Допоміжні методи (фікс + діагностика) -----------------
+
+  private function getFilledMonths(array $table): array {
+    // Очікується $table[YYYY][Mon] => value
+    $monthMap = [
+      'Jan' => 1, 'Feb' => 2, 'Mar' => 3,
+      'Apr' => 4, 'May' => 5, 'Jun' => 6,
+      'Jul' => 7, 'Aug' => 8, 'Sep' => 9,
+      'Oct' => 10, 'Nov' => 11, 'Dec' => 12,
+    ];
+
+    $filled = [];
+
+    foreach ($table as $yearStr => $months) {
+      if (!is_array($months)) {
+        continue;
+      }
+      $year = (int) $yearStr;
+      if ($year <= 0) {
+        continue; // захист від помилкових ключів типу 'table'
+      }
+
+      foreach ($months as $monthName => $value) {
+        if (!isset($monthMap[$monthName])) {
+          continue; // пропускаємо Q1..Q4, YTD тощо
+        }
+        // 0 і '0' вважаються заповненими
+        if ($value !== '' && $value !== NULL) {
+          $monthNum = $monthMap[$monthName];
+          $filled[] = sprintf('%04d-%02d', $year, $monthNum);
+        }
+      }
+    }
+
+    sort($filled, SORT_STRING);
+    return $filled;
+  }
+
+  private function generateMonthRange(string $startMonth, string $endMonth): array {
+    $range = [];
+    $current = new \DateTime($startMonth . '-01');
+    $end = new \DateTime($endMonth . '-01');
+
+    while ($current <= $end) {
+      $range[] = $current->format('Y-m');
+      $current->modify('+1 month');
+    }
+
+    return $range;
+  }
+
+  private function getMissingMonths(array $filledMonths): array {
+    if (empty($filledMonths)) {
+      return [];
+    }
+    $expected = $this->generateMonthRange($filledMonths[0], $filledMonths[count($filledMonths) - 1]);
+    // які саме місяці відсутні
+    return array_values(array_diff($expected, $filledMonths));
+  }
+
+  private function getMissingYears(array $filledMonths): array {
+    if (empty($filledMonths)) {
+      return [];
+    }
+    $years = [];
+    foreach ($filledMonths as $ym) {
+      $years[(int) substr($ym, 0, 4)] = true;
+    }
+    $years = array_keys($years);
+    sort($years, SORT_NUMERIC);
+    if (count($years) <= 1) {
+      return [];
+    }
+
+    $missing = [];
+    $minYear = $years[0];
+    $maxYear = $years[count($years) - 1];
+    for ($y = $minYear; $y <= $maxYear; $y++) {
+      if (!in_array($y, $years, true)) {
+        $missing[] = (string) $y;
+      }
+    }
+    return $missing;
+  }
+
+  private function humanMonth(string $ym): string {
+    // 'YYYY-MM' -> 'ММ.YYYY' (коротко і ясно)
+    $y = substr($ym, 0, 4);
+    $m = substr($ym, 5, 2);
+    return $m . '.' . $y;
+  }
+
+  private function formatMonthList(array $ymList, int $limit = 12): string {
+    $pretty = array_map([$this, 'humanMonth'], $ymList);
+    if (count($pretty) > $limit) {
+      $head = array_slice($pretty, 0, $limit);
+      return implode(', ', $head) . $this->t(' та ін.');
+    }
+    return implode(', ', $pretty);
+  }
+
+}
