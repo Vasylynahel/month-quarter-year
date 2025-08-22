@@ -12,8 +12,6 @@ class ReportTableForm extends FormBase {
   }
 
   public function buildForm(array $form, FormStateInterface $form_state) {
-    $current_year = date('Y');
-
     $months = [
       'Jan', 'Feb', 'Mar', 'Q1',
       'Apr', 'May', 'Jun', 'Q2',
@@ -21,11 +19,14 @@ class ReportTableForm extends FormBase {
       'Oct', 'Nov', 'Dec', 'Q4',
       'YTD',
     ];
+    $quarterKeys = ['Q1','Q2','Q3','Q4'];
+    $monthKeys   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
     $header = array_merge(['Year'], $months);
 
     $form['#attached']['library'][] = 'report_table/report_table.styles';
 
+    // ініціалізація структури таблиць у стані форми
     $tables = $form_state->get('tables');
     if ($tables === NULL) {
       $tables = [[date('Y')]];
@@ -51,11 +52,17 @@ class ReportTableForm extends FormBase {
       '#limit_validation_errors' => [],
     ];
 
+    // Отримуємо значення з форми або ініціалізуємо пусті
+    $values = $form_state->getValue('tables', []);
+    
     foreach ($tables as $index => $years) {
+      // обгортаємо кожну таблицю власним wrapper для AJAX-перемальовки
       $form['tables'][$index]['table'] = [
         '#type' => 'table',
         '#header' => $header,
         '#attributes' => ['class' => ['report-table', 'report-table-wrapper']],
+        '#prefix' => '<div id="table-wrapper-' . $index . '">',
+        '#suffix' => '</div>',
       ];
 
       foreach ($years as $year) {
@@ -63,18 +70,61 @@ class ReportTableForm extends FormBase {
           '#markup' => $year,
         ];
 
-        foreach ($months as $month) {
-          $cell = [
-            '#type' => 'number',
-            '#default_value' => '',
-            '#min' => 0,
-            '#attributes' => ['class' => []],
-            // ВАЖЛИВО: правильні parents, щоб значення реально лежали у tables[index][table][year][month]
-            '#parents' => ['tables', $index, 'table', $year, $month],
-          ];
+        // Отримуємо поточні значення для цього року
+        $yearValues = $values[$index]['table'][$year] ?? [];
 
-          if (in_array($month, ['Q1', 'Q2', 'Q3', 'Q4', 'YTD'], true)) {
-            $cell['#attributes']['class'][] = 'quarter-cell';
+        foreach ($months as $month) {
+          // Визначаємо значення за замовчуванням
+          $default_value = $yearValues[$month] ?? '';
+
+          // Квартальні клітинки: нередаговані number (readonly), крок 0.05
+          if (in_array($month, $quarterKeys, true)) {
+            // Завжди перераховуємо квартали для року
+            $this->computeQuartersForYear($yearValues);
+            $values[$index]['table'][$year] = $yearValues; // зберігаємо стан
+
+            $default_value = $yearValues[$month] ?? NULL;
+
+            $cell = [
+              '#type' => 'number',
+              '#default_value' => ($default_value === NULL) ? '' : $default_value,
+              '#step' => 0.05,
+              '#min' => 0,
+              '#attributes' => [
+                'class' => ['quarter-cell'],
+                'readonly' => 'readonly',
+              ],
+              '#parents' => ['tables', $index, 'table', $year, $month],
+            ];
+          }
+
+
+          // Місячні клітинки: редаговані number + AJAX перерахунок кварталу
+          elseif (in_array($month, $monthKeys, true)) {
+            $cell = [
+              '#type' => 'number',
+              '#default_value' => $default_value,
+              '#min' => 0,
+              '#step' => 0.01,
+              '#attributes' => ['class' => []],
+              '#parents' => ['tables', $index, 'table', $year, $month],
+              '#ajax' => [
+                'callback' => '::recalculateQuarterAjax',
+                'wrapper' => "table-wrapper-$index",
+                'event' => 'change',
+              ],
+            ];
+          }
+          // YTD залишаємо як звичайний number (не розраховуємо тут)
+          else {
+            $cell = [
+              '#type' => 'number',
+              '#default_value' => $default_value,
+              '#min' => 0,
+              '#step' => 0.01,
+              '#attributes' => ['class' => ['ytd-cell']],
+              '#parents' => ['tables', $index, 'table', $year, $month],
+            ];
           }
 
           $form['tables'][$index]['table'][$year][$month] = $cell;
@@ -96,31 +146,64 @@ class ReportTableForm extends FormBase {
     return $form;
   }
 
-  public function validateForm(array &$form, FormStateInterface $form_state) {
+  /**
+   * AJAX: перерахунок кварталів після зміни будь-якого місяця в таблиці.
+   */
+   public function recalculateQuarterAjax(array &$form, FormStateInterface $form_state) {
+    $trigger = $form_state->getTriggeringElement();
+    $parents = $trigger['#parents'] ?? [];
+    // Очікуємо структуру: ['tables', tIndex, 'table', year, month]
+    if (count($parents) < 5) {
+      return $form;
+    }
+    $tIndex = $parents[1];
+    $yearKey = $parents[3];
+
+    // Беремо поточні значення
     $tables = $form_state->getValue('tables') ?? [];
-    if (empty($tables)) {
-      return;
+
+    if (!isset($tables[$tIndex]['table'][$yearKey]) || !is_array($tables[$tIndex]['table'][$yearKey])) {
+      return $form['tables'][$tIndex]['table'];
     }
 
-    $periods = []; // для перевірки однакового періоду у всіх таблицях
+    // Перерахунок кварталів лише для конкретного року в цій таблиці
+    $this->computeQuartersForYear($tables[$tIndex]['table'][$yearKey]);
+
+    // Оновлюємо form_state (щоб значення збереглися і в подальшому сабміті)
+    $form_state->setValue('tables', $tables);
+
+    // Підставляємо значення у рендер-дерево для відображення (Q1..Q4)
+      foreach (['Q1','Q2','Q3','Q4'] as $q) {
+        $val = $tables[$tIndex]['table'][$yearKey][$q] ?? '';
+        $form['tables'][$tIndex]['table'][$yearKey][$q]['#value'] = ($val === NULL) ? '' : $val;
+        $form['tables'][$tIndex]['table'][$yearKey][$q]['#default_value'] = ($val === NULL) ? '' : $val;
+      }
+
+
+    // Повертаємо саме ту таблицю, що має wrapper "table-wrapper-{$tIndex}"
+    return $form['tables'][$tIndex]['table'];
+  }
+
+  public function validateForm(array &$form, FormStateInterface $form_state) {
+    $tables = $form_state->getValue('tables');
+
+    $allPeriods = [];
 
     foreach ($tables as $index => $tableWrapper) {
-      // --- FIX: беремо саме масив з даними рядків/місяців ---
       $table = isset($tableWrapper['table']) && is_array($tableWrapper['table'])
         ? $tableWrapper['table']
         : (is_array($tableWrapper) ? $tableWrapper : []);
 
-      $anchor = "tables][$index][table"; // куди вішати помилку
+      $anchor = "tables][$index][table";
 
       $filledMonths = $this->getFilledMonths($table);
 
       if (empty($filledMonths)) {
         $form_state->setErrorByName($anchor, $this->t('Таблиця @num не містить жодного заповненого місяця.', ['@num' => $index + 1]));
-        // навіть якщо порожня, далі не валідовуємо її
         continue;
       }
 
-      // 1) Розриви по місяцях (у т.ч. на межі років)
+      // Розриви по місяцях (у т.ч. на межі років)
       $missingMonths = $this->getMissingMonths($filledMonths);
       if (!empty($missingMonths)) {
         $form_state->setErrorByName(
@@ -132,10 +215,10 @@ class ReportTableForm extends FormBase {
         );
       }
 
-      // 2) Розриви по роках (якщо років більше одного)
+      // Розриви по роках (якщо років > 1)
       $missingYears = $this->getMissingYears($filledMonths);
       if (!empty($missingYears)) {
-      $form_state->setErrorByName(
+        $form_state->setErrorByName(
           $anchor,
           $this->t('У таблиці @num є розриви по роках. Пропущені роки: @years', [
             '@num'   => $index + 1,
@@ -144,19 +227,18 @@ class ReportTableForm extends FormBase {
         );
       }
 
-      // для перевірки «однаковий період»
-      $periods[] = [
+      $allPeriods[] = [
         'start' => $filledMonths[0],
         'end'   => $filledMonths[count($filledMonths) - 1],
       ];
     }
 
-    // 3) Усі таблиці повинні мати ОДНАКОВИЙ період (той самий min і max)
-    if (!empty($periods)) {
-      $firstStart = $periods[0]['start'];
-      $firstEnd   = $periods[0]['end'];
+    // Всі таблиці мають бути за однаковий період
+    if (!empty($allPeriods)) {
+      $firstStart = $allPeriods[0]['start'];
+      $firstEnd   = $allPeriods[0]['end'];
 
-      foreach ($periods as $i => $p) {
+      foreach ($allPeriods as $i => $p) {
         if ($p['start'] !== $firstStart || $p['end'] !== $firstEnd) {
           $form_state->setErrorByName(
             "tables][$i][table",
@@ -174,7 +256,21 @@ class ReportTableForm extends FormBase {
   }
 
   public function submitForm(array &$form, FormStateInterface $form_state) {
-    \Drupal::messenger()->addMessage($this->t('Форма успішно надіслана.'));
+    // Додатково гарантуємо коректність кварталів при сабміті
+    $tables = $form_state->getValue('tables') ?? [];
+    foreach ($tables as $tIndex => &$tableWrapper) {
+      if (!isset($tableWrapper['table']) || !is_array($tableWrapper['table'])) {
+        continue;
+      }
+      foreach ($tableWrapper['table'] as $year => &$months) {
+        $this->computeQuartersForYear($months);
+      }
+    }
+    unset($months);
+
+    $form_state->setValue('tables', $tables);
+
+    \Drupal::messenger()->addMessage($this->t('Форма успішно надіслана. Квартальні значення розраховані.'));
   }
 
   public function addTableSubmit(array &$form, FormStateInterface $form_state) {
@@ -190,7 +286,6 @@ class ReportTableForm extends FormBase {
     foreach ($tables as &$years) {
       $last_year = end($years);
       $years[] = $last_year - 1;
-      // повертаємо внутрішній покажчик масиву, щоб уникнути побічних ефектів
       reset($years);
     }
     unset($years);
@@ -199,10 +294,9 @@ class ReportTableForm extends FormBase {
     $form_state->setRebuild(TRUE);
   }
 
-  // ----------------- Допоміжні методи (фікс + діагностика) -----------------
+  // ----------------- Допоміжні методи (валідації) -----------------
 
   private function getFilledMonths(array $table): array {
-    // Очікується $table[YYYY][Mon] => value
     $monthMap = [
       'Jan' => 1, 'Feb' => 2, 'Mar' => 3,
       'Apr' => 4, 'May' => 5, 'Jun' => 6,
@@ -218,14 +312,14 @@ class ReportTableForm extends FormBase {
       }
       $year = (int) $yearStr;
       if ($year <= 0) {
-        continue; // захист від помилкових ключів типу 'table'
+        continue;
       }
 
       foreach ($months as $monthName => $value) {
         if (!isset($monthMap[$monthName])) {
-          continue; // пропускаємо Q1..Q4, YTD тощо
+          continue; // пропускаємо Q1..Q4, YTD
         }
-        // 0 і '0' вважаються заповненими
+        // Перевіряємо, чи значення не пусте (включаючи 0)
         if ($value !== '' && $value !== NULL) {
           $monthNum = $monthMap[$monthName];
           $filled[] = sprintf('%04d-%02d', $year, $monthNum);
@@ -255,7 +349,6 @@ class ReportTableForm extends FormBase {
       return [];
     }
     $expected = $this->generateMonthRange($filledMonths[0], $filledMonths[count($filledMonths) - 1]);
-    // які саме місяці відсутні
     return array_values(array_diff($expected, $filledMonths));
   }
 
@@ -269,6 +362,7 @@ class ReportTableForm extends FormBase {
     }
     $years = array_keys($years);
     sort($years, SORT_NUMERIC);
+
     if (count($years) <= 1) {
       return [];
     }
@@ -285,7 +379,6 @@ class ReportTableForm extends FormBase {
   }
 
   private function humanMonth(string $ym): string {
-    // 'YYYY-MM' -> 'ММ.YYYY' (коротко і ясно)
     $y = substr($ym, 0, 4);
     $m = substr($ym, 5, 2);
     return $m . '.' . $y;
@@ -298,6 +391,53 @@ class ReportTableForm extends FormBase {
       return implode(', ', $head) . $this->t(' та ін.');
     }
     return implode(', ', $pretty);
+  }
+
+  // ----------------- Допоміжні методи (квартали) -----------------
+
+  /**
+   * Обчислює Q1..Q4 для заданого року (масив місяців/кварталів).
+   * Формула: ((M1 + M2 + M3) + 1) / 3
+   * Порожні місяці = 0; якщо всі три = 0 → квартал = NULL.
+   * Округлення до 0.05.
+   */
+  private function computeQuartersForYear(array &$months): void {
+    $map = [
+      'Q1' => ['Jan','Feb','Mar'],
+      'Q2' => ['Apr','May','Jun'],
+      'Q3' => ['Jul','Aug','Sep'],
+      'Q4' => ['Oct','Nov','Dec'],
+    ];
+
+    foreach ($map as $q => $mList) {
+      $sum = 0;
+      $allEmpty = true;
+      
+      foreach ($mList as $m) {
+        $v = $months[$m] ?? '';
+        // Перевіряємо, чи місяць заповнений (включаючи 0)
+        if ($v !== '' && $v !== NULL) {
+          $sum += (float) $v;
+          $allEmpty = false;
+        }
+      }
+
+      if ($allEmpty) {
+        $months[$q] = NULL; // всі місяці пусті - квартал NULL
+        continue;
+      }
+
+      $raw = ($sum + 1) / 3;
+      $months[$q] = $this->roundToStep($raw, 0.05); // округлення до 0.05
+    }
+  }
+
+  /**
+   * Стабільне округлення до кроку (0.05 => множник 20).
+   */
+  private function roundToStep(float $value, float $step): float {
+    $factor = (int) round(1 / $step);
+    return round($value * $factor) / $factor;
   }
 
 }
