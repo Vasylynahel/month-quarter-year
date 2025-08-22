@@ -69,6 +69,9 @@ class ReportTableForm extends FormBase {
         $form['tables'][$index]['table'][$year]['year'] = [
           '#markup' => $year,
         ];
+        $form['tables'][$index]['table'][$year]['#prefix'] = '<div id="year-wrapper-' . $index . '-' . $year . '">';
+        $form['tables'][$index]['table'][$year]['#suffix'] = '</div>';
+
 
         // Отримуємо поточні значення для цього року
         $yearValues = $values[$index]['table'][$year] ?? [];
@@ -112,18 +115,33 @@ class ReportTableForm extends FormBase {
                 'callback' => '::recalculateQuarterAjax',
                 'wrapper' => "table-wrapper-$index",
                 'event' => 'change',
+                'effect' => 'none',
+                'progress' => ['type' => 'none'],
               ],
             ];
           }
           // YTD залишаємо як звичайний number (не розраховуємо тут)
           else {
+            // Спершу гарантуємо, що квартали для року є актуальні
+            $this->computeQuartersForYear($yearValues);
+            // Потім рахуємо YTD
+            $this->computeYtdForYear($yearValues);
+
+            // Зберігаємо оновлені значення назад у values (щоб пішли в #default_value)
+            $values[$index]['table'][$year] = $yearValues;
+
+            $default_value = $yearValues['YTD'] ?? NULL;
+
             $cell = [
               '#type' => 'number',
-              '#default_value' => $default_value,
+              '#default_value' => ($default_value === NULL) ? '' : $default_value,
               '#min' => 0,
               '#step' => 0.01,
-              '#attributes' => ['class' => ['ytd-cell']],
-              '#parents' => ['tables', $index, 'table', $year, $month],
+              '#attributes' => [
+                'class' => ['ytd-cell'],
+                'readonly' => 'readonly',
+              ],
+              '#parents' => ['tables', $index, 'table', $year, 'YTD'],
             ];
           }
 
@@ -168,6 +186,7 @@ class ReportTableForm extends FormBase {
 
     // Перерахунок кварталів лише для конкретного року в цій таблиці
     $this->computeQuartersForYear($tables[$tIndex]['table'][$yearKey]);
+    $this->computeYtdForYear($tables[$tIndex]['table'][$yearKey]);
 
     // Оновлюємо form_state (щоб значення збереглися і в подальшому сабміті)
     $form_state->setValue('tables', $tables);
@@ -178,6 +197,10 @@ class ReportTableForm extends FormBase {
         $form['tables'][$tIndex]['table'][$yearKey][$q]['#value'] = ($val === NULL) ? '' : $val;
         $form['tables'][$tIndex]['table'][$yearKey][$q]['#default_value'] = ($val === NULL) ? '' : $val;
       }
+      // YTD
+      $ytd = $tables[$tIndex]['table'][$yearKey]['YTD'] ?? '';
+      $form['tables'][$tIndex]['table'][$yearKey]['YTD']['#value'] = ($ytd === NULL) ? '' : $ytd;
+      $form['tables'][$tIndex]['table'][$yearKey]['YTD']['#default_value'] = ($ytd === NULL) ? '' : $ytd;
 
 
     // Повертаємо саме ту таблицю, що має wrapper "table-wrapper-{$tIndex}"
@@ -264,6 +287,7 @@ class ReportTableForm extends FormBase {
       }
       foreach ($tableWrapper['table'] as $year => &$months) {
         $this->computeQuartersForYear($months);
+        $this->computeYtdForYear($months);
       }
     }
     unset($months);
@@ -431,6 +455,41 @@ class ReportTableForm extends FormBase {
       $months[$q] = $this->roundToStep($raw, 0.05); // округлення до 0.05
     }
   }
+  
+  /**
+ * Обчислює YTD для заданого року.
+ * Формула: ((Q1 + Q2 + Q3 + Q4) + 1) / 4
+ * Порожні квартали = 0. Округлення до 2 знаків.
+ */
+/**
+ * Обчислює YTD для заданого року.
+ * Формула: ((Q1 + Q2 + Q3 + Q4) + 1) / 4
+ * Порожні квартали = 0, але якщо всі 4 квартали пусті → YTD = NULL.
+ * Округлення до 2 знаків.
+ */
+private function computeYtdForYear(array &$months): void {
+  $sum = 0.0;
+  $hasAnyQuarter = false;
+
+  foreach (['Q1','Q2','Q3','Q4'] as $q) {
+    $v = $months[$q] ?? NULL;
+    if ($v !== '' && $v !== NULL) {
+      $sum += (float) $v;
+      $hasAnyQuarter = true;
+    }
+  }
+
+  if (!$hasAnyQuarter) {
+    // усі квартали пусті → не показуємо YTD
+    $months['YTD'] = NULL;
+    return;
+  }
+
+  $raw = ($sum + 1) / 4;
+  $months['YTD'] = round($raw, 2);
+}
+
+
 
   /**
    * Стабільне округлення до кроку (0.05 => множник 20).
